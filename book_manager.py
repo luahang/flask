@@ -1,7 +1,7 @@
-from flask import Flask, render_template, flash, request, redirect, url_for
+from flask import Flask, render_template, flash, request, redirect, url_for, make_response
 from flask_sqlalchemy import SQLAlchemy
 from wtforms.validators import DataRequired
-from wtforms import StringField, SubmitField
+from wtforms import StringField, SubmitField, PasswordField
 from flask_wtf import FlaskForm
 
 app = Flask(__name__)
@@ -10,14 +10,44 @@ app.config['SQLALCHEMY_DATABASE_URI'] = 'mysql://root:123456@127.0.0.1/flask_boo
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.secret_key = 'luhang'
 
+# decorator
+def login_decorator(func):
+    def login_func(*args, **kwargs):
+        if request.cookies.get('name', None):
+            return func(*args, **kwargs)
+        else:
+            response = redirect(url_for('loginView'))
+            return response
+    return login_func
+
 # WTF
 class AuthorForm(FlaskForm):
     author = StringField('author', validators=[DataRequired()])
     book = StringField('bookname', validators=[DataRequired()])
     submmit = SubmitField('comfirm')
 
+# Login WTF
+class LoginForm(FlaskForm):
+    name = StringField('用户名：', validators=[DataRequired()])
+    password = PasswordField('用户密码', validators=[DataRequired()])
+    submmit = SubmitField('登录')
+
+# Register WTF
+class RegisterFrom(FlaskForm):
+    name = StringField('用户名：', validators=[DataRequired()])
+    password = PasswordField('用户密码:', validators=[DataRequired()])
+    cirmPass = PasswordField('确认密码:', validators=[DataRequired()])
+    submmit = SubmitField('注册')
+
 # 创建数据库对象
 db = SQLAlchemy(app)
+
+class User(db.Model):
+    __tablename__ = 'users'
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(16), unique=True)
+    password = db.Column(db.String(8), unique=False)
+    role = db.Column(db.Integer, default=0)
 
 class Author(db.Model):
     __tablename__ = 'authors'
@@ -48,6 +78,54 @@ class Book(db.Model):
 6.实现相关的增删操作
 
 '''
+
+# login 逻辑的实现
+@app.route('/login',methods=['GET', 'POST'])
+def loginView():
+    form = LoginForm()
+    if request.method == 'POST':
+        cookie = request.cookies.get('name')
+        if cookie:
+            return redirect(url_for('index'))
+        uname = request.form.get('name')
+        pwd = request.form.get('password')
+        print(uname, pwd)
+        # 查询数据库进行判断
+        user = User.query.filter_by(name=uname).first()
+        if user:
+            if user.password == pwd:
+                response = make_response('hello')
+                response.set_cookie('name',uname)
+                return redirect(url_for('index'))
+            else:
+                flash('密码错误')
+        else:
+            flash('该用户不存在')
+    return render_template('login.html', form=form)
+
+
+# register 逻辑的实现
+@app.route('/register', methods=['GET', 'POST'])
+def registerView():
+    form = RegisterFrom()
+    if request.method == 'POST':
+        name = request.form.get('name')
+        pwd = request.form.get('password')
+        rpwd = request.form.get('cirmPass')
+        if pwd == rpwd:
+            try:
+                user = User(name=name, password=pwd)
+                db.session.add(user)
+                db.session.commit()
+                return redirect(url_for('loginView'))
+            except Exception as e:
+                print(e)
+                flash('注册失败')
+                db.session.rollback()
+        else:
+            flash('两次密码不一致')
+    return render_template('register.html', form=form)
+
 # 作者的删除
 @app.route('/delete_author/<author_id>')
 def delete_author(author_id):
@@ -82,7 +160,9 @@ def delete_book(book_id):
         flash('没有该书籍，请输入正确的书籍')
     return redirect(url_for('index'))
 
+
 @app.route('/', methods=['GET', 'POST'])
+@login_decorator
 def index():
     '''
     1. 调用WTF的函数实现验证
